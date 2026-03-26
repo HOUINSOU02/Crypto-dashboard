@@ -4,6 +4,7 @@ Un tableau de bord minimaliste et élégant pour suivre le marché des cryptomon
 
 ## ✨ Fonctionnalités
 
+- **Fear & Greed Index** : Visualisez le sentiment global du marché (données Alternative.me).
 - **Mode Comparaison** : Superposez deux actifs sur le même graphique pour analyser les corrélations.
 - **Support Multi-devise** : Basculez instantanément entre l'affichage en USD et en EUR.
 - **Données en Temps Réel** : Prix et variations sur 24h mis à jour automatiquement toutes les 60 secondes.

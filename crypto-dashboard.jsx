@@ -151,6 +151,7 @@ export default function App() {
   const [chartTimestamp, setChartTimestamp] = useState(null);
   const chartCache = useRef(new Map()); // Cache pour les données de graphique
   const [error, setError]           = useState(null);
+  const [fng, setFng]               = useState(null);
 
   // Search state
   const [query, setQuery]           = useState("");
@@ -180,6 +181,27 @@ export default function App() {
       setError("Limite API atteinte — actualisation dans 60s");
     }
   }, [userCoins, currency]);
+
+  /* Fetch Fear & Greed Index */
+  const fetchFng = useCallback(async () => {
+    try {
+      const res = await fetch("https://api.alternative.me/fng/");
+      const data = await res.json();
+      if (data.data && data.data[0]) {
+        setFng(data.data[0]);
+      }
+    } catch (e) {
+      console.error("F&G Fetch error:", e);
+    }
+  }, []);
+
+  const getFngColor = (val) => {
+    if (val <= 25) return "#f87171"; // Extreme Fear
+    if (val <= 45) return "#fb923c"; // Fear
+    if (val <= 55) return "#facc15"; // Neutral
+    if (val <= 75) return "#34d399"; // Greed
+    return "#059669"; // Extreme Greed
+  };
 
   /* Helper to get points for one coin (cache or API) */
   const getChartPoints = useCallback(async (id, days, cur) => {
@@ -237,6 +259,7 @@ export default function App() {
 
   useEffect(() => { fetchPrices(); const t = setInterval(fetchPrices, 60000); return () => clearInterval(t); }, [fetchPrices]);
   useEffect(() => { fetchChart(selected.id, period, currency, compareId); }, [selected, period, currency, compareId, fetchChart]);
+  useEffect(() => { fetchFng(); }, [fetchFng]);
 
   // Effect to save userCoins to localStorage whenever it changes
   useEffect(() => {
@@ -346,7 +369,7 @@ export default function App() {
 
       {/* Header */}
       <div style={{ maxWidth: 1100, margin: "0 auto" }}>
-        <div className="header-top" style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-end", marginBottom: 32 }}>
+        <div className="header-top" style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 32 }}>
           <div>
             <div style={{ display: "flex", alignItems: "center", gap: 20, marginBottom: 4 }}>
               <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
@@ -391,7 +414,7 @@ export default function App() {
           </div>
 
           {/* Search Bar */}
-          <div className="search-bar" style={{ position: "relative", width: 300, margin: "0 40px" }}>
+          <div className="search-bar" style={{ position: "relative", width: 260, margin: "0 20px" }}>
             <input
               type="text"
               placeholder="Rechercher une crypto..."
@@ -438,22 +461,41 @@ export default function App() {
             )}
           </div>
 
-          {/* Currency Toggle */}
-          <div className="currency-nav" style={{ display: "flex", gap: 4, background: "#111118", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 4, marginRight: 20 }}>
-            {['usd', 'eur'].map((c) => (
-              <button key={c} onClick={() => setCurrency(c)} style={{
-                padding: "6px 12px",
-                border: "none",
-                borderRadius: 6,
-                background: currency === c ? "#6366f1" : "transparent",
-                color: currency === c ? "#fff" : "#4b5563",
-                fontSize: 11,
-                fontFamily: "'IBM Plex Mono',monospace",
-                fontWeight: 700,
-                cursor: "pointer",
-                textTransform: "uppercase"
-              }}>{c}</button>
-            ))}
+          <div style={{ display: "flex", alignItems: "center", gap: 24 }}>
+            {/* Fear & Greed Index */}
+            {fng && (
+              <div style={{ textAlign: "right", borderRight: "1px solid rgba(255,255,255,0.05)", paddingRight: 20 }}>
+                <p style={{ fontSize: 9, fontFamily: "'IBM Plex Mono',monospace", color: "#4b5563", marginBottom: 2, textTransform: "uppercase", letterSpacing: "0.1em" }}>
+                  Sentiment (F&G)
+                </p>
+                <div style={{ display: "flex", alignItems: "baseline", gap: 6, justifyContent: "flex-end" }}>
+                  <span style={{ fontSize: 18, fontWeight: 700, color: getFngColor(parseInt(fng.value)), fontFamily: "'IBM Plex Mono',monospace" }}>
+                    {fng.value}
+                  </span>
+                  <span style={{ fontSize: 10, color: "#9ca3af", fontWeight: 500, textTransform: "uppercase" }}>
+                    {fng.value_classification}
+                  </span>
+                </div>
+              </div>
+            )}
+
+            {/* Currency Toggle */}
+            <div className="currency-nav" style={{ display: "flex", gap: 4, background: "#111118", border: "1px solid rgba(255,255,255,0.1)", borderRadius: 10, padding: 4 }}>
+              {['usd', 'eur'].map((c) => (
+                <button key={c} onClick={() => setCurrency(c)} style={{
+                  padding: "6px 12px",
+                  border: "none",
+                  borderRadius: 6,
+                  background: currency === c ? "#6366f1" : "transparent",
+                  color: currency === c ? "#fff" : "#4b5563",
+                  fontSize: 11,
+                  fontFamily: "'IBM Plex Mono',monospace",
+                  fontWeight: 700,
+                  cursor: "pointer",
+                  textTransform: "uppercase"
+                }}>{c}</button>
+              ))}
+            </div>
           </div>
 
           <div className="portfolio-stat" style={{ textAlign: "right" }}>
