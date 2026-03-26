@@ -26,19 +26,37 @@ const fmtPct = (n) => `${n >= 0 ? "+" : ""}${n.toFixed(2)}%`;
 const fmtDate = (ts) => new Date(ts).toLocaleDateString("fr-FR", { day: "2-digit", month: "short" });
 
 /* ─── Custom Tooltip ─── */
-function ChartTooltip({ active, payload, label, currency }) {
+function ChartTooltip({ active, payload, label, currency, selectedCoin, compareCoin }) {
   if (!active || !payload?.length) return null;
   return (
     <div style={{
       background: "#0f0f17",
       border: "1px solid rgba(255,255,255,0.08)",
       borderRadius: 8,
-      padding: "8px 14px",
+      padding: "10px 14px",
       fontFamily: "'IBM Plex Mono', monospace",
       fontSize: 12,
+      minWidth: 160
     }}>
-      <p style={{ color: "#6b7280", marginBottom: 4 }}>{label}</p>
-      <p style={{ color: "#f0f0f5", fontWeight: 500 }}>{fmt(payload[0].value, currency)}</p>
+      <p style={{ color: "#6b7280", marginBottom: 8, fontSize: 10 }}>{label}</p>
+      
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, marginBottom: payload[1] ? 6 : 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <div style={{ width: 6, height: 6, borderRadius: "50%", background: payload[0].color }} />
+          <span style={{ color: "#9ca3af", fontWeight: 500 }}>{selectedCoin?.symbol}</span>
+        </div>
+        <span style={{ color: "#f0f0f5", fontWeight: 700 }}>{fmt(payload[0].value, currency)}</span>
+      </div>
+
+      {payload[1] && (
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, borderTop: "1px solid rgba(255,255,255,0.05)", paddingTop: 6 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+            <div style={{ width: 6, height: 6, borderRadius: "50%", background: payload[1].color }} />
+            <span style={{ color: "#9ca3af", fontWeight: 500 }}>{compareCoin?.symbol}</span>
+          </div>
+          <span style={{ color: "#f0f0f5", fontWeight: 700 }}>{fmt(payload[1].value, currency)}</span>
+        </div>
+      )}
     </div>
   );
 }
@@ -123,6 +141,7 @@ export default function App() {
   });
 
   const [currency, setCurrency]     = useState("usd");
+  const [compareId, setCompareId]   = useState(null);
   const [prices, setPrices]         = useState({});
   const [changes, setChanges]       = useState({});
   const [chartData, setChartData]   = useState([]);
@@ -162,44 +181,62 @@ export default function App() {
     }
   }, [userCoins, currency]);
 
-  /* Fetch chart */
-  const fetchChart = useCallback(async (coinId, days, cur) => {
-    setError(null); // Clear previous errors when fetching new chart
-
-    const cacheKey = `${coinId}-${days}-${cur}`;
+  /* Helper to get points for one coin (cache or API) */
+  const getChartPoints = useCallback(async (id, days, cur) => {
+    const cacheKey = `${id}-${days}-${cur}`;
     const cached = chartCache.current.get(cacheKey);
-
     if (cached && (Date.now() - cached.timestamp < CHART_CACHE_TTL)) {
-      // Utiliser les données mises en cache si disponibles et non expirées
-      setChartData(cached.data);
-      setChartTimestamp(cached.timestamp);
-      setLoading(false);
-      return;
+      return { data: cached.data, timestamp: cached.timestamp };
     }
+
+    const res = await fetch(`${API_BASE}/coins/${id}/market_chart?vs_currency=${cur}&days=${days}`);
+    if (res.status === 429) throw new Error("Rate Limit");
+    if (!res.ok) throw new Error("Network Error");
+
+    const data = await res.json();
+    const step = Math.max(1, Math.floor(data.prices.length / 60));
+    const processed = data.prices
+      .filter((_, i) => i % step === 0)
+      .map(([ts, price]) => ({ date: fmtDate(ts), price: Math.round(price * 100) / 100 }));
+
+    const result = { data: processed, timestamp: Date.now() };
+    chartCache.current.set(cacheKey, result);
+    return result;
+  }, []);
+
+  /* Fetch chart */
+  const fetchChart = useCallback(async (coinId, days, cur, compId) => {
+    setError(null);
     setLoading(true);
     try {
-      const res = await fetch(
-        `${API_BASE}/coins/${coinId}/market_chart?vs_currency=${cur}&days=${days}`
-      );
-      if (res.status === 429) throw new Error("Rate Limit");
-      if (!res.ok) throw new Error("Network Error");
+      const primary = await getChartPoints(coinId, days, cur);
+      let mergedData = primary.data;
+      let ts = primary.timestamp;
 
-      const data = await res.json();
-      const step = Math.max(1, Math.floor(data.prices.length / 60));
-      setChartData(
-        data.prices
-          .filter((_, i) => i % step === 0)
-          .map(([ts, price]) => ({ date: fmtDate(ts), price: Math.round(price * 100) / 100 }))
-      );
+      if (compId) {
+        const secondary = await getChartPoints(compId, days, cur);
+        // Fusion intelligente basée sur l'index (car les steps sont synchronisés par getChartPoints)
+        mergedData = primary.data.map((p, i) => {
+          const sPoint = secondary.data[i];
+          return {
+            ...p,
+            comparePrice: sPoint ? sPoint.price : null
+          };
+        });
+        ts = Math.min(primary.timestamp, secondary.timestamp);
+      }
+
+      setChartData(mergedData);
+      setChartTimestamp(ts);
     } catch (err) {
       setError(err.message === "Rate Limit" ? "Trop de requêtes — attendez 1 min" : "Erreur de connexion");
     } finally {
       setLoading(false);
     }
-  }, [currency]);
+  }, [currency, getChartPoints]);
 
   useEffect(() => { fetchPrices(); const t = setInterval(fetchPrices, 60000); return () => clearInterval(t); }, [fetchPrices]);
-  useEffect(() => { fetchChart(selected.id, period, currency); }, [selected, period, currency, fetchChart]);
+  useEffect(() => { fetchChart(selected.id, period, currency, compareId); }, [selected, period, currency, compareId, fetchChart]);
 
   // Effect to save userCoins to localStorage whenever it changes
   useEffect(() => {
@@ -209,6 +246,12 @@ export default function App() {
       console.error("Failed to save coins to localStorage:", error);
     }
   }, [userCoins]);
+
+  const selectCoin = (coin) => {
+    setSelected(coin);
+    // Si on sélectionne la monnaie qui était en comparaison, on annule la comparaison
+    if (compareId === coin.id) setCompareId(null);
+  };
 
   /* Search Logic */
   const searchCoins = async (q) => {
@@ -259,6 +302,7 @@ export default function App() {
     if (userCoins.length <= 1) return;
     const filtered = userCoins.filter(c => c.id !== id);
     setUserCoins(filtered);
+    if (compareId === id) setCompareId(null);
     if (selected.id === id) setSelected(filtered[0]);
   };
 
@@ -270,9 +314,11 @@ export default function App() {
     // Déclencher les deux mises à jour en parallèle
     await Promise.all([
       fetchPrices(),
-      fetchChart(selected.id, period, currency)
+      fetchChart(selected.id, period, currency, compareId)
     ]);
   };
+
+  const compareCoin = userCoins.find(c => c.id === compareId);
 
   return (
     <div className="container-padding" style={{ background: "#08080f", minHeight: "100vh", fontFamily: "'Syne', sans-serif", padding: "28px 24px 60px" }}>
@@ -444,7 +490,7 @@ export default function App() {
                 price={prices[coin.id]}
                 change24h={changes[coin.id]}
                 selected={selected.id === coin.id}
-                onClick={() => setSelected(coin)}
+                onClick={() => selectCoin(coin)}
                 currency={currency}
               />
               {userCoins.length > 1 && (
@@ -490,7 +536,7 @@ export default function App() {
                 )}
               </div>
               <p style={{ fontSize: 26, fontWeight: 700, fontFamily: "'IBM Plex Mono',monospace", color: "#f0f0f5", letterSpacing: "-0.02em" }}>
-                {prices[selected.id] != null ? fmt(prices[selected.id]) : "···"}
+                {prices[selected.id] != null ? fmt(prices[selected.id], currency) : "···"}
                 {changes[selected.id] != null && (
                   <span style={{ fontSize: 14, marginLeft: 12, color: changes[selected.id] >= 0 ? "#34d399" : "#f87171" }}>
                     {fmtPct(changes[selected.id])}
@@ -499,25 +545,43 @@ export default function App() {
               </p>
             </div>
 
-            {/* Period selector */}
-            <div style={{ display: "flex", gap: 4, background: "#08080f", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: 4 }}>
-              {[7, 30, 90].map((d) => (
-                <button key={d} onClick={() => setPeriod(d)} style={{
-                  padding: "6px 14px",
-                  border: "none",
-                  borderRadius: 6,
-                  background: period === d ? selected.color + "20" : "transparent",
-                  color: period === d ? selected.color : "#4b5563",
-                  fontSize: 12,
-                  fontFamily: "'IBM Plex Mono',monospace",
-                  fontWeight: 500,
-                  cursor: "pointer",
-                  transition: "all .15s",
-                  outline: period === d ? `1px solid ${selected.color}40` : "none",
-                }}>
-                  {d}J
-                </button>
-              ))}
+            {/* Comparison + Period selector */}
+            <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+              <select 
+                value={compareId || ""} 
+                onChange={(e) => setCompareId(e.target.value || null)}
+                style={{
+                  background: "#08080f", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8,
+                  padding: "6px 10px", color: compareId ? compareCoin?.color : "#4b5563",
+                  fontSize: 11, fontFamily: "'IBM Plex Mono',monospace", outline: "none"
+                }}
+              >
+                <option value="">Comparer avec...</option>
+                {userCoins.filter(c => c.id !== selected.id).map(c => (
+                  <option key={c.id} value={c.id}>{c.symbol}</option>
+                ))}
+              </select>
+              
+              {/* Period selector */}
+              <div style={{ display: "flex", gap: 4, background: "#08080f", border: "1px solid rgba(255,255,255,0.06)", borderRadius: 8, padding: 4 }}>
+                {[7, 30, 90].map((d) => (
+                  <button key={d} onClick={() => setPeriod(d)} style={{
+                    padding: "6px 14px",
+                    border: "none",
+                    borderRadius: 6,
+                    background: period === d ? selected.color + "20" : "transparent",
+                    color: period === d ? selected.color : "#4b5563",
+                    fontSize: 12,
+                    fontFamily: "'IBM Plex Mono',monospace",
+                    fontWeight: 500,
+                    cursor: "pointer",
+                    transition: "all .15s",
+                    outline: period === d ? `1px solid ${selected.color}40` : "none",
+                  }}>
+                    {d}J
+                  </button>
+                ))}
+              </div>
             </div>
           </div>
 
@@ -549,14 +613,25 @@ export default function App() {
                   axisLine={false} tickLine={false}
                   interval={Math.floor(chartData.length / 5)}
                 />
-                <YAxis
+                <YAxis 
+                  yAxisId="left"
                   tick={{ fill: "#4b5563", fontSize: 10, fontFamily: "'IBM Plex Mono',monospace" }}
                   axisLine={false} tickLine={false}
                   tickFormatter={(v) => `${currency === 'usd' ? '$' : '€'}${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`}
                   width={55}
                 />
-                <Tooltip content={<ChartTooltip currency={currency} />} />
+                {compareId && (
+                  <YAxis 
+                    yAxisId="right" orientation="right"
+                    tick={{ fill: compareCoin?.color, fontSize: 10, fontFamily: "'IBM Plex Mono',monospace", opacity: 0.8 }}
+                    axisLine={false} tickLine={false}
+                    tickFormatter={(v) => `${currency === 'usd' ? '$' : '€'}${v >= 1000 ? (v / 1000).toFixed(0) + "k" : v}`}
+                    width={55}
+                  />
+                )}
+                <Tooltip content={<ChartTooltip currency={currency} selectedCoin={selected} compareCoin={compareCoin} />} />
                 <Area
+                  yAxisId="left"
                   type="monotone"
                   dataKey="price"
                   stroke={selected.color}
@@ -568,6 +643,20 @@ export default function App() {
                   animationDuration={800}
                   animationEasing="ease-in-out"
                 />
+                {compareId && (
+                  <Area
+                    yAxisId="right"
+                    type="monotone"
+                    dataKey="comparePrice"
+                    stroke={compareCoin?.color}
+                    strokeWidth={2}
+                    fill="transparent"
+                    dot={false}
+                    activeDot={{ r: 4, fill: compareCoin?.color, stroke: "#08080f", strokeWidth: 2 }}
+                    isAnimationActive={true}
+                    animationDuration={800}
+                  />
+                )}
               </AreaChart>
             </ResponsiveContainer>
           </div>

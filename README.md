@@ -4,6 +4,8 @@ Un tableau de bord minimaliste et élégant pour suivre le marché des cryptomon
 
 ## ✨ Fonctionnalités
 
+- **Mode Comparaison** : Superposez deux actifs sur le même graphique pour analyser les corrélations.
+- **Support Multi-devise** : Basculez instantanément entre l'affichage en USD et en EUR.
 - **Données en Temps Réel** : Prix et variations sur 24h mis à jour automatiquement toutes les 60 secondes.
 - **Graphiques Dynamiques** : Visualisation des tendances sur 7, 30 ou 90 jours avec des transitions fluides (Recharts).
 - **Recherche Intégrée** : Possibilité d'ajouter n'importe quelle cryptomonnaie via la barre de recherche utilisant l'API CoinGecko.
